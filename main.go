@@ -1,47 +1,101 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
-	"math/rand"
-	"os"
-	"time"
-
-	"example.com/paymentapp/payments"
-	"example.com/paymentapp/processor"
+    "encoding/json"
+    "flag"
+    "fmt"
+    "io/ioutil"
+    "os"
 )
 
+type Note struct {
+    ID   int    `json:"id"`
+    Text string `json:"text"`
+}
+
+const noteFile = "notes.json"
+
+// خواندن یادداشت‌ها
+func loadNotes() ([]Note, error) {
+    if _, err := os.Stat(noteFile); os.IsNotExist(err) {
+        return []Note{}, nil
+    }
+    data, err := ioutil.ReadFile(noteFile)
+    if err != nil {
+        return nil, err
+    }
+    if len(data) == 0 {
+        return []Note{}, nil
+    }
+    var notes []Note
+    err = json.Unmarshal(data, &notes)
+    return notes, err
+}
+
+// ذخیره یادداشت‌ها
+func saveNotes(notes []Note) error {
+    data, err := json.MarshalIndent(notes, "", "  ")
+    if err != nil {
+        return err
+    }
+    return ioutil.WriteFile(noteFile, data, 0644)
+}
+
 func main() {
-	// Setup logging
-	log.SetOutput(os.Stdout)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.Println("Payment processing application started")
+    addCmd := flag.NewFlagSet("add", flag.ExitOnError)
+    listCmd := flag.NewFlagSet("list", flag.ExitOnError)
+    delCmd := flag.NewFlagSet("del", flag.ExitOnError)
+    addText := addCmd.String("text", "", "متن یادداشت جدید")
 
-	rand.Seed(time.Now().UnixNano())
+    if len(os.Args) < 2 {
+        fmt.Println("Usage: notemgr [add|list|del]")
+        os.Exit(1)
+    }
 
-	// Create context with timeout (can be cancelled if needed)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+    switch os.Args[1] {
+    case "add":
+        addCmd.Parse(os.Args[2:])
+        if *addText == "" {
+            fmt.Println("لطفا با --text متن یادداشت را وارد کنید.")
+            os.Exit(1)
+        }
+        notes, _ := loadNotes()
+        newNote := Note{ID: len(notes) + 1, Text: *addText}
+        notes = append(notes, newNote)
+        saveNotes(notes)
+        fmt.Println("✅ یادداشت اضافه شد:", newNote.Text)
 
-	// Optional: Uncomment to test cancellation
-	// go func() {
-	// 	time.Sleep(2 * time.Second)
-	// 	log.Println("Cancelling payment processing...")
-	// 	cancel()
-	// }()
+    case "list":
+        listCmd.Parse(os.Args[2:])
+        notes, _ := loadNotes()
+        if len(notes) == 0 {
+            fmt.Println("⛔ هیچ یادداشتی وجود ندارد.")
+            return
+        }
+        fmt.Println("📋 لیست یادداشت‌ها:")
+        for _, n := range notes {
+            fmt.Printf("%d. %s\n", n.ID, n.Text)
+        }
 
-	// create processors
-	bank := &payments.BankCard{Holder: "Ali", CardNumber: "1111-2222-3333-4444", Limit: 200.0}
-	wallet := &payments.Wallet{UserID: "user123", Balance: 80.0}
-	crypto := &payments.Crypto{Address: "0xABCDEF", Balance: 50.0}
+    case "del":
+        delCmd.Parse(os.Args[2:])
+        if delCmd.NArg() == 0 {
+            fmt.Println("لطفا شماره یادداشت را وارد کنید. مثل: notemgr del 2")
+            return
+        }
+        id := delCmd.Arg(0)
+        notes, _ := loadNotes()
+        var newNotes []Note
+        for _, n := range notes {
+            if fmt.Sprintf("%d", n.ID) != id {
+                newNotes = append(newNotes, n)
+            }
+        }
+        saveNotes(newNotes)
+        fmt.Println("🗑️ یادداشت حذف شد:", id)
 
-	processors := []payments.PaymentProcessor{bank, wallet, crypto, bank, wallet}
-	amounts := []float64{45.0, 70.0, 30.0, 120.0, 20.0}
-
-	fmt.Println("Processing payments...")
-	processor.HandlePayments(ctx, processors, amounts)
-
-	fmt.Println("\nAll payments processed!")
-	log.Println("Payment processing application finished")
+    default:
+        fmt.Println("Unknown command:", os.Args[1])
+        fmt.Println("Available: add, list, del")
+    }
 }
